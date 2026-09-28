@@ -175,6 +175,26 @@ label.f,div.f{display:flex;flex-direction:column;gap:5px;font-size:12px;font-wei
 .lightbox .row .btn.ghost{background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.25)}
 .lightbox .btn.danger{color:#f3c9ce;border-color:#b57f87}
 
+/* página inicial */
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tile{display:flex;flex-direction:column;align-items:stretch;gap:4px;text-align:left;padding:16px;min-height:150px;border-radius:20px;color:var(--ink);width:100%}
+.tile.wide{min-height:0;gap:6px}
+.tile .tile-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.tile .ico{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(148,80,91,.10);color:var(--maroon)}
+.tile .ico svg{width:17px;height:17px}
+.tile .chev{font-size:20px;line-height:1;color:var(--muted);opacity:.6}
+.tile .eyebrow{font-size:10.5px}
+.tile .tv{font-family:var(--serif);font-size:27px;font-weight:600;line-height:1.1}
+.tile .ts{font-size:12.5px;color:var(--muted);line-height:1.35;margin-top:auto}
+.tile.wide .ts{margin-top:0}
+.tile.hero .big{font-size:58px}
+.tile.alert .ico{background:rgba(148,80,91,.18)}
+.tile.alert{border-color:rgba(148,80,91,.35)}
+.tile .mini{display:flex;gap:2px;height:5px;margin:4px 0 2px}
+.tile .mini i{display:block;height:100%;border-radius:3px}
+.tile .mini i.m{background:var(--c-p1)} .tile .mini i.b{background:var(--c-p2)}
+.tile:active{transform:scale(.985)}
+@media (max-width:350px){.tiles{grid-template-columns:1fr}}
 /* painel das viagens */
 :root{--c-p1:#A8465A;--c-p2:#6E8F3A}
 .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
@@ -246,6 +266,7 @@ input[type=date].inp::-webkit-date-and-time-value{text-align:left}
   <button class="nav" data-go="cal">Calendário</button>
   <button class="nav" data-go="photos">Fotos</button>
   <button class="nav" data-go="settings">Configurações</button>
+  <button class="nav" data-act-drawer="logout" style="font-size:18px;color:var(--muted)">Terminar sessão</button>
   <button class="btn ghost close" id="drawerClose">Fechar</button>
 </nav>
 
@@ -280,7 +301,7 @@ const toNum = v => { const n = parseFloat(String(v).replace(/\s/g,"").replace(",
 const byDateDesc = (a,b) => (b.date||"").localeCompare(a.date||"") || (b.createdAt||0)-(a.createdAt||0);
 
 const INVESTOR = "p2"; // quem faz os investimentos (Bruno)
-const S = { personal:[], names:{p1:"Maria",p2:"Bruno"}, monthly:250, settings:{}, trips:[], expenses:[], settlements:[], invest:[], cal:{}, albums:[], photos:[] };
+const S = { personal:[], auth:{}, names:{p1:"Maria",p2:"Bruno"}, monthly:250, settings:{}, trips:[], expenses:[], settlements:[], invest:[], cal:{}, albums:[], photos:[] };
 let db = null, assets = null, dbState = "connecting";
 let view = {name:"home"};
 const HASH_VIEW = (location.hash||"").slice(1);
@@ -439,7 +460,8 @@ function go(name, extra={}){
 }
 function openDrawer(){ $("#drawer").classList.add("on"); $("#scrim").classList.add("on"); $("#menuBtn").setAttribute("aria-expanded","true"); }
 function closeDrawer(){ $("#drawer").classList.remove("on"); $("#scrim").classList.remove("on"); $("#menuBtn").setAttribute("aria-expanded","false"); }
-$("#menuBtn").onclick = openDrawer; $("#scrim").onclick = closeDrawer; $("#drawerClose").onclick = closeDrawer;
+$("#menuBtn").onclick = openDrawer;
+document.querySelector('[data-act-drawer="logout"]').addEventListener("click", () => logout("Sessão terminada.")); $("#scrim").onclick = closeDrawer; $("#drawerClose").onclick = closeDrawer;
 document.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => go(b.dataset.go)));
 
 /* ---------- sheet ---------- */
@@ -465,6 +487,8 @@ let rq = false;
 function render(){ if (rq) return; rq = true; requestAnimationFrame(()=>{ rq=false; draw(); }); }
 function draw(){
   $("#brandSub").textContent = N("p1")+" e "+N("p2");
+  $("#menuBtn").hidden = !SESSION;
+  if (!SESSION) { document.body.classList.remove("has-fab"); $("#main").innerHTML = vLogin(); bindLogin(); return; }
   document.querySelectorAll("[data-go]").forEach(b => b.classList.toggle("on", b.dataset.go===view.name || (view.name==="trip"&&b.dataset.go==="trips") || (view.name==="album"&&b.dataset.go==="photos")));
   const V = {home:vHome, trips:vTrips, trip:vTrip, invest:vInvest, mine:vMine, cal:vCal, photos:vPhotos, album:vAlbum, settings:vSettings}[view.name] || vHome;
   let html = "";
@@ -505,43 +529,62 @@ function vHome(){
   const tom = addDays(t,1), ringToday = ringEvent(t), ringTom = ringEvent(tom);
 
   const mm = monthly();
+  const me = ME(), ny = now.getFullYear(), nm = now.getMonth();
+  const mineNow = me ? monthSum(ny, nm) : 0, pmD = new Date(ny, nm-1, 1), minePrev = me ? monthSum(pmD.getFullYear(), pmD.getMonth()) : 0;
+  const pendTotal = open.reduce((s,x)=>s+x.b.amount,0);
+  const ICON = {
+    wallet:'<path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3"/><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M16 13.5h.01"/>',
+    grow:'<path d="M4 17l5-5 4 3 7-7"/><path d="M15 8h5v5"/>',
+    scale:'<path d="M12 4v16M6 20h12"/><path d="M5 8h14"/><path d="M5 8l-2.5 5a2.8 2.8 0 0 0 5 0z"/><path d="M19 8l-2.5 5a2.8 2.8 0 0 0 5 0z"/>',
+    home:'<path d="M4 11l8-6 8 6"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/>',
+    heart:'<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>',
+    photo:'<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M20 16l-5-5-8 8"/>'
+  };
+  const ico = k => `<span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg></span>`;
+  const tile = (act, v, icon, label, value, sub, extra="") => `<button class="glass tile" data-act="${act}"${v?` data-v="${v}"`:""}>
+      <div class="tile-h">${ico(icon)}<span class="chev" aria-hidden="true">›</span></div>
+      <div class="eyebrow">${label}</div>
+      <div class="tv num">${value}</div>
+      ${extra}
+      <div class="ts">${sub}</div>
+    </button>`;
+  const diff = mineNow - minePrev;
+  const tMine = me ? tile("go","mine","wallet","Os meus gastos", money(mineNow),
+      minePrev ? `${diff>0?"+":diff<0?"−":""}${money(Math.abs(diff))} vs. ${MESES[pmD.getMonth()]}` : `${MESES[nm].charAt(0).toUpperCase()+MESES[nm].slice(1)} · privado`) : "";
+  const tInv = tile("go","invest","grow","Investido", money(it.all),
+      it.all ? `${esc(N("p1"))} ${Math.round(it.p1/it.all*100)}% · ${esc(N("p2"))} ${Math.round(it.p2/it.all*100)}%` : "Sem contribuições",
+      it.all ? `<div class="mini"><i class="m" style="flex:${it.p1||0.0001}"></i><i class="b" style="flex:${it.p2||0.0001}"></i></div>` : "");
+  const tBal = tile(open.length===1?"trip":"go", open.length===1?esc(open[0].tr.id):"trips","scale","Por acertar", open.length ? money(pendTotal) : "0,00 €",
+      open.length ? (open.length===1 ? `${esc(N(open[0].b.from))} deve · ${esc(open[0].tr.name)}` : `${open.length} viagens por acertar`) : "Tudo regularizado");
+  const tBru = tile("go","cal","home", brunoHome ? esc(N("p2"))+" em casa" : esc(N("p2"))+" chega",
+      brunoHome ? "Hoje" : nb ? (nb.in===1 ? "Amanhã" : "Em "+nb.in+" dias") : "—",
+      brunoHome ? (nb && nextDate(s=>!calTypes(s).includes("bruno")) ? "Até "+fmtShort(addDays(nextDate(s=>!calTypes(s).includes("bruno")).date,-1)) : "Bom tempo juntos") : nb ? esc(fmtShort(nb.date)) : "Sem chegada prevista");
   return `
-  ${mm.due ? `<button class="banner tap" data-act="go" data-v="invest" style="border:0"><strong>Transferência mensal pendente:</strong> ${money(mm.amount)} de ${esc(N("p1"))} para ${esc(N(INVESTOR))}. Selecione para registar.</button>` : ""}
   <div>
     <div class="eyebrow">${esc(DIAS[now.getDay()])}, ${now.getDate()} de ${MESES[now.getMonth()]}</div>
-    <h1>${brunoHome ? esc(N("p2"))+" está em casa hoje." : "Bem-vindos, "+esc(N("p1"))+" e "+esc(N("p2"))+"."}</h1>
+    <h1>${me ? "Olá, "+esc(N(me))+"." : "Bem-vindos."}</h1>
   </div>
-  <div class="glass card">
+  ${mm.due ? `<button class="glass tile wide alert" data-act="go" data-v="invest">
+      <div class="tile-h">${ico("grow")}<span class="chev" aria-hidden="true">›</span></div>
+      <div class="eyebrow">Transferência mensal pendente</div>
+      <div class="tv num">${money(mm.amount)}</div>
+      <div class="ts">${esc(N("p1"))} → ${esc(N(INVESTOR))} · toque para registar</div>
+    </button>` : ""}
+  <button class="glass tile wide hero" data-act="go" data-v="cal">
+    <div class="tile-h">${ico("heart")}<span class="chev" aria-hidden="true">›</span></div>
     <div class="eyebrow">Próximo dia em conjunto</div>
-    ${nt ? `<div class="row" style="align-items:flex-end">
-        <div class="big num">${nt.in===0?"Hoje":nt.in}</div>
-        <div class="muted small" style="text-align:right">${nt.in===0?"hoje":nt.in===1?"dia (amanhã)":"dias"}<br>${esc(fmtDate(nt.date))}</div>
-      </div>` : `<div class="muted">Sem dias em conjunto previstos. Contam os fins de semana com ${esc(N("p2"))} em casa e os dias em que ambos estão de férias.</div>`}
-    <div class="small muted">${brunoHome ? "" : nb ? "Próxima chegada de "+esc(N("p2"))+": "+inDays(nb.in)+"." : ""} ${esc(extra.join(" "))}</div>
-    <button class="link" data-act="go" data-v="cal">Abrir calendário</button>
-  </div>
-  ${ME() ? `<button class="glass card tap" data-act="go" data-v="mine" style="display:block">
-    <div class="eyebrow">Os meus gastos · ${MESES[new Date().getMonth()]}</div>
-    <div class="num" style="font-family:var(--serif);font-size:30px;font-weight:600;line-height:1.1;margin-top:6px">${money(monthSum(new Date().getFullYear(), new Date().getMonth()))}</div>
-    <div class="small muted" style="margin-top:4px">Privado · apenas ${esc(N(ME()))} vê este valor</div>
-  </button>` : ""}
-  <div class="grid2">
-    <div class="glass card">
-      <div class="eyebrow">Total investido</div>
-      <div class="num" style="font-family:var(--serif);font-size:30px;font-weight:600;line-height:1.1">${money(it.all)}</div>
-      ${it.all? `<div class="bar"><span style="width:${(it.p1/it.all*100).toFixed(1)}%;background:var(--maroon)"></span><span style="flex:1;background:var(--olive)"></span></div>
-      <div class="small muted num">${esc(N("p1"))} ${Math.round(it.p1/it.all*100)}% · ${esc(N("p2"))} ${Math.round(it.p2/it.all*100)}%</div>` : `<div class="small muted">Ainda sem contribuições registadas.</div>`}
-    </div>
-    <div class="glass card">
-      <div class="eyebrow">Saldos pendentes</div>
-      ${open.length ? `<div class="stack">${open.map(x=>`<button class="tap" data-act="trip" data-v="${esc(x.tr.id)}"><div class="t" style="font-weight:600">${esc(x.tr.name)}</div><div class="small muted">${esc(N(x.b.from))} deve ${money(x.b.amount)}</div></button>`).join("")}</div>`
-        : `<div class="small muted">Não existem saldos pendentes.</div>`}
-    </div>
-  </div>
-  <div class="glass card">
-    <div class="row"><div class="eyebrow">Em destaque</div>${album?`<button class="link" data-act="album" data-v="${esc(album.id)}">${esc(album.name)}</button>`:""}</div>
+    ${nt ? `<div class="row" style="align-items:flex-end;gap:10px">
+      <div class="big num">${nt.in===0?"Hoje":nt.in}</div>
+      <div class="ts" style="text-align:right">${nt.in===0?"aproveitem":nt.in===1?"dia · amanhã":"dias"}<br>${esc(fmtDow(nt.date))}</div>
+    </div>` : `<div class="ts">Contam os fins de semana com ${esc(N("p2"))} em casa e os dias em que ambos estão de férias.</div>`}
+    ${extra.length ? `<div class="ts">${esc(extra.join(" "))}</div>` : ""}
+  </button>
+  <div class="tiles">${tMine}${tInv}${tBal}${tBru}</div>
+  <div class="glass tile wide" style="cursor:default">
+    <div class="tile-h">${ico("photo")}${album?`<button class="link" data-act="album" data-v="${esc(album.id)}">${esc(album.name)} ›</button>`:""}</div>
+    <div class="eyebrow">Em destaque</div>
     ${lastPhoto ? `<img class="hero-photo" src="/_blob/${esc(lastPhoto.assetId)}" alt="Fotografia mais recente" loading="lazy">`
-      : `<div class="muted small">Crie um álbum na secção Fotos para apresentar aqui a fotografia mais recente.</div><button class="btn ghost sm" data-act="go" data-v="photos">Ir para Fotos</button>`}
+      : `<div class="ts">A fotografia mais recente dos vossos álbuns aparece aqui.</div><button class="btn ghost sm" data-act="go" data-v="photos" style="align-self:flex-start">Ir para Fotos</button>`}
   </div>`;
 }
 
@@ -706,7 +749,89 @@ function monthlyCard(){
 /* Os meus gastos (pessoal: cada telemóvel/utilizador vê apenas os seus) */
 const PCATS = ["Habitação","Supermercado","Restauração","Transportes","Saúde","Lazer","Vestuário e compras","Cuidado pessoal","Subscrições","Viagens","Outras despesas"];
 const PCATS_MANUAL = PCATS.filter(c=>c!=="Viagens");
-const ME = () => { try { const v = localStorage.getItem("vad-me"); return v==="p1"||v==="p2" ? v : null; } catch(e){ return null; } };
+/* ---------- início de sessão ----------
+   Cada pessoa tem palavra-passe própria. Da palavra-passe deriva-se (PBKDF2, 310 000 iterações) uma chave AES-GCM
+   que cifra os gastos pessoais; a palavra-passe nunca é guardada, só um verificador. */
+let SESSION = null; // {user:"p1"|"p2", key:CryptoKey, salt}
+const ME = () => SESSION ? SESSION.user : null;
+window.vadCurrentUser = ME;
+const tenc = new TextEncoder(), tdec = new TextDecoder();
+const b64e = u8 => { let s = ""; const a = new Uint8Array(u8); for (let i=0;i<a.length;i+=0x8000) s += String.fromCharCode.apply(null, a.subarray(i,i+0x8000)); return btoa(s); };
+const b64d = s => Uint8Array.from(atob(s), c=>c.charCodeAt(0));
+const PBKDF2_ITER = 310000;
+async function deriveKeys(pass, saltB64, iter){
+  const base = await crypto.subtle.importKey("raw", tenc.encode(pass), "PBKDF2", false, ["deriveBits"]);
+  const bits = new Uint8Array(await crypto.subtle.deriveBits({name:"PBKDF2", salt:b64d(saltB64), iterations:iter||PBKDF2_ITER, hash:"SHA-256"}, base, 512));
+  const key = await crypto.subtle.importKey("raw", bits.slice(0,32), "AES-GCM", false, ["encrypt","decrypt"]);
+  const ver = b64e(await crypto.subtle.digest("SHA-256", bits.slice(32)));
+  return {key, ver};
+}
+async function encObj(key, obj){ const iv = crypto.getRandomValues(new Uint8Array(12)); const ct = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, tenc.encode(JSON.stringify(obj))); return {iv:b64e(iv), ct:b64e(ct)}; }
+async function decObj(key, d){ const pt = await crypto.subtle.decrypt({name:"AES-GCM", iv:b64d(d.iv)}, key, b64d(d.ct)); return JSON.parse(tdec.decode(pt)); }
+window.vadCrypto = {deriveKeys, encObj, decObj};
+let loginUser = null, loginBusy = false;
+const authDoc = p => S.auth[p];
+async function doLogin(user, pass){
+  const a = authDoc(user); if (!a) return false;
+  const k = await deriveKeys(pass, a.salt, a.iter);
+  if (k.ver !== a.ver) return false;
+  SESSION = {user, key:k.key, salt:a.salt}; loginUser = null;
+  await refreshPersonal(true); scheduleNative(); return true;
+}
+async function createAccount(user, pass){
+  const salt = b64e(crypto.getRandomValues(new Uint8Array(16)));
+  const k = await deriveKeys(pass, salt, PBKDF2_ITER);
+  await db.doc("auth/"+user).set({salt, iter:PBKDF2_ITER, ver:k.ver, createdAt:Date.now()});
+  SESSION = {user, key:k.key, salt}; loginUser = null;
+  await refreshPersonal(true); scheduleNative();
+}
+function logout(msg){ SESSION = null; loginUser = null; S.personal = []; closeSheet(); closeDrawer(); $("#lightbox").hidden = true; go("home"); if (msg) toast(msg); }
+let hiddenAt = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) hiddenAt = Date.now();
+  else if (SESSION && hiddenAt && Date.now()-hiddenAt > 5*60*1000) logout("Sessão terminada por inatividade.");
+});
+/* gastos pessoais: só os do utilizador com sessão iniciada são decifrados */
+let lastPersonalDocs = [];
+async function refreshPersonal(migrate){
+  if (!SESSION) { S.personal = []; return; }
+  const me = SESSION.user, out = [], legacy = [];
+  for (const d of lastPersonalDocs){
+    if (!d || d.owner !== me) continue;
+    if (d.ct) { try { out.push({id:d.id, owner:me, ...(await decObj(SESSION.key, d))}); } catch(e){} }
+    else { const {id, ...rest} = d; out.push({id, ...rest}); legacy.push({id, ...rest}); }
+  }
+  S.personal = out; render();
+  if (migrate) for (const x of legacy){ const {id, owner, ...data} = x; try { await col("personal").doc(id).set({owner, ...(await encObj(SESSION.key, data))}); } catch(e){} }
+}
+async function changePassword(oldPass, newPass){
+  const me = SESSION.user, a = authDoc(me);
+  const k0 = await deriveKeys(oldPass, a.salt, a.iter); if (k0.ver !== a.ver) return false;
+  const salt = b64e(crypto.getRandomValues(new Uint8Array(16))); const k1 = await deriveKeys(newPass, salt, PBKDF2_ITER);
+  for (const x of S.personal){ const {id, owner, virt, ...data} = x; if (virt) continue; await col("personal").doc(id).set({owner:me, ...(await encObj(k1.key, data))}); }
+  await db.doc("auth/"+me).set({salt, iter:PBKDF2_ITER, ver:k1.ver, createdAt:a.createdAt||Date.now()});
+  SESSION = {user:me, key:k1.key, salt}; return true;
+}
+/* importação de cópias: gastos pessoais só do utilizador com sessão; contas deste telemóvel mantêm-se */
+window.vadPrepareImport = async (bdocs, localDocs) => {
+  const me = ME(), out = {};
+  for (const [k,v] of Object.entries(bdocs)) if (!k.startsWith("auth/") && !k.startsWith("personal/")) out[k] = v;
+  for (const [k,v] of Object.entries(localDocs)) if (k.startsWith("auth/") || k.startsWith("personal/")) out[k] = v;
+  if (!me) return out;
+  const mine = Object.entries(bdocs).filter(([k,v]) => k.startsWith("personal/") && v && v.owner===me);
+  const bAuth = bdocs["auth/"+me], lAuth = localDocs["auth/"+me];
+  let oldKey = null;
+  if (mine.some(([k,v])=>v.ct) && bAuth && lAuth && bAuth.salt !== lAuth.salt) {
+    const pass = prompt("Os seus gastos pessoais desta cópia estão protegidos com a palavra-passe que tinha quando a cópia foi criada. Indique essa palavra-passe (deixe em branco para não os importar):");
+    if (pass) { const k = await deriveKeys(pass, bAuth.salt, bAuth.iter); if (k.ver === bAuth.ver) oldKey = k.key; else alert("Palavra-passe incorreta. Os gastos pessoais desta cópia não foram importados."); }
+  }
+  for (const [k,v] of mine){
+    if (!v.ct) { out[k] = v; continue; }                       // formato antigo: é cifrado ao iniciar sessão
+    if (!bAuth || !lAuth || bAuth.salt === lAuth.salt) { out[k] = v; continue; }
+    if (oldKey) { try { const data = await decObj(oldKey, v); out[k] = {owner:me, ...(await encObj(SESSION.key, data))}; } catch(e){} }
+  }
+  return out;
+};
 let persMonth = (()=>{ const d=new Date(); return {y:d.getFullYear(), m:d.getMonth()}; })();
 const mKey = (y,m) => y+"-"+pad(m+1);
 /* registos automáticos a partir das viagens: despesas pagas por mim e acertos que eu paguei */
@@ -724,11 +849,7 @@ const myPersonal = () => { const me = ME(); return me ? [...S.personal.filter(x=
 const monthSum = (y,m) => myPersonal().filter(x=>(x.date||"").startsWith(mKey(y,m))).reduce((s,x)=>s+(+x.amount||0),0);
 function vMine(){
   const me = ME();
-  if (!me) return `<h1>Os meus gastos</h1>
-    <div class="glass card"><h2>De quem é este telemóvel?</h2>
-      <div class="small muted">Os gastos pessoais são privados: cada pessoa vê e regista apenas os seus. Indique quem utiliza este telemóvel.</div>
-      <div class="btns"><button class="btn" data-act="setMe" data-v="p1">${esc(N("p1"))}</button><button class="btn olive" data-act="setMe" data-v="p2">${esc(N("p2"))}</button></div>
-      <div class="small muted">Pode alterar mais tarde em Configurações.</div></div>`;
+  if (!me) return "";
   const {y,m} = persMonth, key = mKey(y,m), col_ = me==="p1"?"m":"b";
   const list = myPersonal().filter(x=>(x.date||"").startsWith(key)).sort(byDateDesc);
   const total = list.reduce((s,x)=>s+(+x.amount||0),0);
@@ -788,8 +909,8 @@ function persSheet(x){
       const amount = Math.round(toNum($("#pa").value)*100)/100;
       if (!(amount>0)) { toast("Indique um valor superior a zero."); return; }
       const date = $("#pdt").value || todayStr();
-      const data = {owner:me, amount, desc:$("#pd").value.trim(), cat:b.querySelector("input[name=pc]:checked").value, date, createdAt:x?.createdAt||Date.now()};
-      if (await w(()=>col("personal").doc(x?.id||newId()).set(data), x?"Gasto guardado":"Gasto registado")) { closeSheet(); const d = parseYmd(date); persMonth = {y:d.getFullYear(), m:d.getMonth()}; render(); }
+      const data = {amount, desc:$("#pd").value.trim(), cat:b.querySelector("input[name=pc]:checked").value, date, createdAt:x?.createdAt||Date.now()};
+      if (await w(async ()=>col("personal").doc(x?.id||newId()).set({owner:me, ...(await encObj(SESSION.key, data))}), x?"Gasto guardado":"Gasto registado")) { closeSheet(); const d = parseYmd(date); persMonth = {y:d.getFullYear(), m:d.getMonth()}; render(); }
     };
     const d = b.querySelector("#del"); if (d) d.onclick = async ()=>{ if (await w(()=>col("personal").doc(x.id).delete(),"Gasto eliminado")) closeSheet(); };
   });
@@ -812,6 +933,11 @@ function vCal(){
   const nt = nextDate(together);
   return `
   <h1>Calendário</h1>
+  ${!ringCfg() && ME()==="p1" || !brunoCfg() ? `<div class="glass card">
+    <div class="eyebrow">Por configurar</div>
+    <div class="small">${[!brunoCfg()?"a escala de "+esc(N("p2")):"", !ringCfg()&&ME()==="p1"?"o ciclo do anel":""].filter(Boolean).join(" e ").replace(/^./,c=>c.toUpperCase())} ainda não ${(!brunoCfg() && !ringCfg() && ME()==="p1")?"estão":"está"} definid${(!brunoCfg() && !ringCfg() && ME()==="p1")?"os":"o"} neste telemóvel. Importe a cópia de segurança da app antiga ou indique as datas nas Configurações.</div>
+    <button class="btn sm" data-act="go" data-v="settings" style="align-self:flex-start">Configurar</button>
+  </div>` : ""}
   <div class="glass card">
     <div class="cal-head">
       <button class="arrow" data-act="calPrev" aria-label="Mês anterior"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
@@ -859,14 +985,75 @@ function vAlbum(){
   ${selMode && ph.length ? `<div class="selbar glass"><button class="link" data-act="selAll">${sel.size===ph.length?"Desmarcar todas":"Selecionar todas"}</button><button class="btn sm" data-act="selSave" ${sel.size?"":"disabled"}>Guardar ${sel.size||""} no telemóvel</button></div>` : ""}`;
 }
 
+/* ecrã de início de sessão */
+function vLogin(){
+  if (dbState!=="on") return `<div class="glass card" style="margin-top:30px"><div class="empty">${dbState==="off"?"Não foi possível aceder ao armazenamento deste navegador.":"A carregar…"}</div></div>`;
+  if (!loginUser) return `
+  <div style="margin-top:24px"><div class="eyebrow">Iniciar sessão</div><h1>Quem está a entrar?</h1></div>
+  <div class="glass card"><div class="stack" style="gap:10px">
+    ${["p1","p2"].map(p=>`<button class="btn ${p==="p1"?"":"olive"}" data-act="loginPick" data-v="${p}" style="padding:14px">${esc(N(p))}${authDoc(p)?"":" · criar palavra-passe"}</button>`).join("")}
+  </div></div>
+  <div class="small muted">Cada pessoa entra com a sua própria palavra-passe. Os gastos pessoais ficam cifrados e só podem ser lidos por quem os registou.</div>`;
+  const has = !!authDoc(loginUser);
+  return `
+  <div style="margin-top:24px"><div class="eyebrow">${has?"Iniciar sessão":"Criar palavra-passe"}</div><h1>${esc(N(loginUser))}</h1></div>
+  <div class="glass card">
+    <form id="loginForm">
+      <label class="f" for="lp1">Palavra-passe<input class="inp" type="password" id="lp1" autocomplete="${has?"current-password":"new-password"}" required minlength="${has?1:8}"></label>
+      ${has?"":`<label class="f" for="lp2">Repetir palavra-passe<input class="inp" type="password" id="lp2" autocomplete="new-password" required minlength="8"></label>
+      <div class="small muted">Mínimo de 8 caracteres. Guarde-a num local seguro: se a esquecer, os seus gastos pessoais não podem ser recuperados.</div>`}
+      <button class="btn" type="submit" ${loginBusy?"disabled":""}>${loginBusy?"A verificar…":has?"Entrar":"Criar e entrar"}</button>
+    </form>
+    <div class="row"><button class="link" data-act="loginBack">Voltar</button>${has?'<button class="link" data-act="loginReset">Esqueci-me da palavra-passe</button>':""}</div>
+  </div>`;
+}
+function bindLogin(){
+  const f = $("#loginForm"); if (!f) return;
+  f.onsubmit = async ev => { ev.preventDefault(); if (loginBusy) return;
+    const p1 = $("#lp1").value, user = loginUser, has = !!authDoc(user);
+    if (!has) { const p2 = $("#lp2").value; if (p1.length<8) { toast("A palavra-passe deve ter pelo menos 8 caracteres."); return; } if (p1!==p2) { toast("As palavras-passe não coincidem."); return; } }
+    loginBusy = true; render();
+    try {
+      if (has) { const ok = await doLogin(user, p1); if (!ok) toast("Palavra-passe incorreta."); else toast("Olá, "+N(user)+"."); }
+      else { await createAccount(user, p1); toast("Palavra-passe criada. Olá, "+N(user)+"."); }
+    } catch(e){ toast("Não foi possível iniciar sessão neste navegador."); }
+    loginBusy = false; render();
+  };
+}
+function chgPassSheet(){
+  openSheet(`<h2>Alterar palavra-passe</h2>
+  <form id="f">
+    <label class="f" for="cp0">Palavra-passe atual<input class="inp" type="password" id="cp0" autocomplete="current-password" required></label>
+    <label class="f" for="cp1">Nova palavra-passe<input class="inp" type="password" id="cp1" autocomplete="new-password" required minlength="8"></label>
+    <label class="f" for="cp2">Repetir nova palavra-passe<input class="inp" type="password" id="cp2" autocomplete="new-password" required minlength="8"></label>
+    <button class="btn" type="submit">Alterar</button>
+  </form>`, b => b.querySelector("#f").onsubmit = async ev => { ev.preventDefault();
+    const a = $("#cp0").value, n1 = $("#cp1").value, n2 = $("#cp2").value;
+    if (n1.length<8) { toast("A palavra-passe deve ter pelo menos 8 caracteres."); return; }
+    if (n1!==n2) { toast("As palavras-passe não coincidem."); return; }
+    try { if (await changePassword(a, n1)) { closeSheet(); toast("Palavra-passe alterada."); } else toast("A palavra-passe atual está incorreta."); }
+    catch(e){ toast("Não foi possível alterar a palavra-passe."); }
+  });
+}
+function resetSheet(){
+  openSheet(`<h2>Esqueci-me da palavra-passe</h2>
+  <p>Por segurança, a palavra-passe não pode ser recuperada nem contornada. A única opção é <strong>repor a aplicação neste telemóvel</strong>: são apagados <strong>todos os dados deste telemóvel</strong> (viagens, calendário, fotografias, investimentos e gastos pessoais de todos).</p>
+  <p class="small muted">Depois pode criar uma nova palavra-passe e importar uma cópia de segurança. Os gastos pessoais protegidos pela palavra-passe esquecida não podem ser recuperados.</p>
+  <label class="f" for="rz">Para confirmar, escreva APAGAR<input class="inp" id="rz" autocomplete="off"></label>
+  <button class="btn danger" id="yes">Apagar todos os dados deste telemóvel</button>`, b => b.querySelector("#yes").onclick = async () => {
+    if ($("#rz").value.trim().toUpperCase()!=="APAGAR") { toast("Escreva APAGAR para confirmar."); return; }
+    try { await window.vadWipe(); } catch(e){ toast("Não foi possível repor a aplicação."); }
+  });
+}
+
 /* Configurações */
 function vSettings(){
   return `
   <h1>Configurações</h1>
   <div class="glass card">
-    <h2>Utilizador deste telemóvel</h2>
-    <div class="small muted">Define de quem são os gastos pessoais registados neste telemóvel.</div>
-    <div class="seg" role="tablist">${[["p1",N("p1")],["p2",N("p2")]].map(([k,l])=>`<button type="button" class="segb${ME()===k?" on":""}" data-act="setMe" data-v="${k}">${esc(l)}</button>`).join("")}</div>
+    <h2>Sessão</h2>
+    <div class="small">Sessão iniciada como <strong>${esc(N(ME()))}</strong>. A sessão termina automaticamente após 5 minutos com a aplicação em segundo plano.</div>
+    <div class="btns"><button class="btn ghost" type="button" data-act="logout">Terminar sessão</button><button class="btn ghost" type="button" data-act="chgPass">Alterar palavra-passe</button></div>
   </div>
   <div class="glass card">
     <h2>Nomes</h2>
@@ -979,7 +1166,11 @@ $("#main").addEventListener("click", ev => {
     newInv: ()=>invSheet(),
     newPers: ()=>persSheet(),
     editPers: ()=>persSheet(S.personal.find(x=>x.id===v)),
-    setMe: ()=>{ try { localStorage.setItem("vad-me", v); } catch(e){} render(); },
+    logout: ()=>logout("Sessão terminada."),
+    chgPass: ()=>chgPassSheet(),
+    loginPick: ()=>{ loginUser = v; render(); setTimeout(()=>{ const f = $("#lp1"); if (f) f.focus(); }, 50); },
+    loginBack: ()=>{ loginUser = null; render(); },
+    loginReset: ()=>resetSheet(),
     persPrev: ()=>{ persMonth.m--; if(persMonth.m<0){persMonth.m=11;persMonth.y--;} render(); },
     persNext: ()=>{ persMonth.m++; if(persMonth.m>11){persMonth.m=0;persMonth.y++;} render(); },
     payMonthly: ()=>monthlySheet(),
@@ -1369,7 +1560,8 @@ connecting = (async () => {
   const onErr = () => { toast("A ligação aos dados foi interrompida. Recarregue a página."); };
   const listen = (name, key) => col(name).onSnapshot(s => { S[key] = s.docs.map(d => ({id:d.id, ...(d.data()||{})})); render(); if (!$("#lightbox").hidden) drawLightbox(); }, onErr);
   listen("trips","trips"); listen("expenses","expenses"); listen("settlements","settlements");
-  listen("investments","invest"); listen("personal","personal"); listen("albums","albums"); listen("photos","photos");
+  listen("investments","invest"); col("personal").onSnapshot(s => { lastPersonalDocs = s.docs.map(d => ({id:d.id, ...(d.data()||{})})); refreshPersonal(false); }, onErr);
+  col("auth").onSnapshot(s => { const o = {}; s.docs.forEach(d => o[d.id] = d.data()||{}); S.auth = o; render(); }, onErr); listen("albums","albums"); listen("photos","photos");
   col("calendar").onSnapshot(s => { const o = {}; s.docs.forEach(d => o[d.id] = d.data()||{}); S.cal = o; render(); }, onErr);
   db.doc("config/settings").onSnapshot(s => { if (s.exists){ const d = s.data()||{}; S.settings = d; S.names = {p1:d.p1||"Maria", p2:d.p2||"Bruno"}; S.monthly = d.monthly ?? 250; S.ring = d.ring || null; S.bruno = d.bruno || null; } scheduleNative(); render(); checkMonthlyNotification(); }, onErr);
   // correção: conversões antigas ficavam em nome de quem devia; passam para quem tinha a receber

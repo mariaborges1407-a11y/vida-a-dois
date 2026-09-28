@@ -209,14 +209,19 @@
   }
   window.vadSaveFiles = saveFiles;
   window.vadIsNative = isNative;
-  const currentMe = () => { try { return localStorage.getItem("vad-me"); } catch (e) { return null; } };
+  const currentMe = () => (window.vadCurrentUser ? window.vadCurrentUser() : null);
+  window.vadWipe = async () => { await ready; await clearAll(); try { localStorage.removeItem("vad-view"); } catch (e) {} location.reload(); };
 
   /* ---------- cópia de segurança ---------- */
   async function exportAll() {
     await ready;
     const me = currentMe(), docs = {};
     // os gastos pessoais só seguem na cópia se forem de quem a está a exportar
-    mem.forEach((v, k) => { if (k.startsWith("personal/") && (!v || v.owner !== me)) return; docs[k] = v; });
+    mem.forEach((v, k) => {
+      if (k.startsWith("personal/") && (!v || v.owner !== me)) return; // só os gastos pessoais (cifrados) de quem exporta
+      if (k.startsWith("auth/") && k !== "auth/" + me) return;         // só a conta de quem exporta
+      docs[k] = v;
+    });
     const blobs = {};
     for (const k of await blobKeys()) { const b = await getBlob(k); if (b) blobs[k] = await toDataURL(b); }
     const json = JSON.stringify({ app: "vida-a-dois", version: 1, exportedAt: new Date().toISOString(), docs, blobs });
@@ -229,17 +234,13 @@
     let data; try { data = JSON.parse(await file.text()); } catch (e) { alert("Ficheiro inválido."); return; }
     if (!data || data.app !== "vida-a-dois" || !data.docs) { alert("O ficheiro selecionado não é uma cópia de segurança válida da Vida a Dois."); return; }
     if (!confirm("Esta operação substitui todos os dados deste dispositivo pelos da cópia de segurança. Pretende continuar?")) return;
-    // mantém os gastos pessoais de quem usa este telemóvel
-    const me = currentMe(), keep = [];
-    mem.forEach((v, k) => { if (k.startsWith("personal/") && v && v.owner === me) keep.push([k, v]); });
+    // contas e gastos pessoais deste telemóvel mantêm-se; da cópia só entram os gastos pessoais de quem tem sessão iniciada
+    const local = {}; mem.forEach((v, k) => local[k] = v);
+    const docs = window.vadPrepareImport ? await window.vadPrepareImport(data.docs, local) : data.docs;
     await clearAll();
     urlCache.forEach(u => URL.revokeObjectURL(u)); urlCache.clear();
-    for (const [k, v] of Object.entries(data.docs)) {
-      if (k.startsWith("personal/") && (!v || v.owner !== me)) continue; // gastos pessoais de outra pessoa não entram
-      await putDoc(k, v);
-    }
+    for (const [k, v] of Object.entries(docs)) await putDoc(k, v);
     for (const [k, v] of Object.entries(data.blobs || {})) await putBlob(k, fromDataURL(v));
-    for (const [k, v] of keep) if (!(k in data.docs)) await putDoc(k, v);
     location.reload();
   }
 
