@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Vida a Dois</string>
+    <string name="title_activity_main">Vida a Dois</string>
+    <string name="package_name">pt.vidaadois.app</string>
+    <string name="custom_url_scheme">pt.vidaadois.app</string>
+</resources>
