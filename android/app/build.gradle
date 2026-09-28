@@ -26,6 +26,10 @@ android {
                 keyAlias "vidaadois"
                 keyPassword System.getenv("KEYSTORE_PASSWORD")
             }
+            // assinatura com os três esquemas (v1, v2 e v3) para máxima compatibilidade com os instaladores (ex.: Xiaomi/HyperOS)
+            enableV1Signing true
+            enableV2Signing true
+            enableV3Signing true
         }
     }
     buildTypes {
