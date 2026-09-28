@@ -1,0 +1,69 @@
+name: Compilar app Android
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Copiar a app para o projeto Android
+        run: npx cap sync android
+
+      - name: Preparar chave de assinatura
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Falta o secret KEYSTORE_BASE64 (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/vidaadois.jks"
+          echo "KEYSTORE_FILE=$RUNNER_TEMP/vidaadois.jks" >> "$GITHUB_ENV"
+
+      - name: Compilar APK
+        working-directory: android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          VERSION_CODE: ${{ github.run_number }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk ../vida-a-dois.apk
+
+      - name: Guardar APK nesta execução
+        uses: actions/upload-artifact@v4
+        with:
+          name: vida-a-dois-apk
+          path: vida-a-dois.apk
+
+      - name: Publicar em Releases (para descarregar no telemóvel)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Vida a Dois 1.0.${{ github.run_number }}
+          body: Versão Android. Descarregue o ficheiro vida-a-dois.apk no telemóvel e instale-o.
+          files: vida-a-dois.apk
+          make_latest: true
