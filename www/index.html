@@ -278,6 +278,10 @@ input[type=date].inp::-webkit-date-and-time-value{text-align:left}
 <input type="file" id="fileInput" accept="image/*" multiple hidden>
 
 <script src="local-store.js"></script>
+<script src="vendor/firebase-app-compat.js"></script>
+<script src="vendor/firebase-auth-compat.js"></script>
+<script src="vendor/firebase-firestore-compat.js"></script>
+<script src="sync.js"></script>
 <script>
 (() => {
 "use strict";
@@ -769,23 +773,23 @@ async function deriveKeys(pass, saltB64, iter){
 async function encObj(key, obj){ const iv = crypto.getRandomValues(new Uint8Array(12)); const ct = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, tenc.encode(JSON.stringify(obj))); return {iv:b64e(iv), ct:b64e(ct)}; }
 async function decObj(key, d){ const pt = await crypto.subtle.decrypt({name:"AES-GCM", iv:b64d(d.iv)}, key, b64d(d.ct)); return JSON.parse(tdec.decode(pt)); }
 window.vadCrypto = {deriveKeys, encObj, decObj};
-let loginUser = null, loginBusy = false;
+let loginUser = null, loginBusy = false, showOtherAcc = false;
 const authDoc = p => S.auth[p];
 async function doLogin(user, pass){
   const a = authDoc(user); if (!a) return false;
   const k = await deriveKeys(pass, a.salt, a.iter);
   if (k.ver !== a.ver) return false;
   SESSION = {user, key:k.key, salt:a.salt}; loginUser = null;
-  await refreshPersonal(true); scheduleNative(); return true;
+  await refreshPersonal(true); scheduleNative(); if (window.vadSync) window.vadSync.setUser(user); return true;
 }
 async function createAccount(user, pass){
   const salt = b64e(crypto.getRandomValues(new Uint8Array(16)));
   const k = await deriveKeys(pass, salt, PBKDF2_ITER);
   await db.doc("auth/"+user).set({salt, iter:PBKDF2_ITER, ver:k.ver, createdAt:Date.now()});
   SESSION = {user, key:k.key, salt}; loginUser = null;
-  await refreshPersonal(true); scheduleNative();
+  await refreshPersonal(true); scheduleNative(); if (window.vadSync) window.vadSync.setUser(user);
 }
-function logout(msg){ SESSION = null; loginUser = null; S.personal = []; closeSheet(); closeDrawer(); $("#lightbox").hidden = true; go("home"); if (msg) toast(msg); }
+function logout(msg){ if (window.vadSync) window.vadSync.setUser(null); SESSION = null; loginUser = null; showOtherAcc = false; S.personal = []; closeSheet(); closeDrawer(); $("#lightbox").hidden = true; go("home"); if (msg) toast(msg); }
 let hiddenAt = 0;
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) hiddenAt = Date.now();
@@ -985,15 +989,86 @@ function vAlbum(){
   ${selMode && ph.length ? `<div class="selbar glass"><button class="link" data-act="selAll">${sel.size===ph.length?"Desmarcar todas":"Selecionar todas"}</button><button class="btn sm" data-act="selSave" ${sel.size?"":"disabled"}>Guardar ${sel.size||""} no telemóvel</button></div>` : ""}`;
 }
 
+/* ---------- sincronização (UI) ---------- */
+if (window.vadSync) window.vadSync.onChange(() => { if (view.name==="settings") render(); });
+function syncCard(){
+  const V = window.vadSync; if (!V || !V.available()) return "";
+  const st = V.status();
+  const when = st.last ? new Date(st.last).toLocaleString("pt-PT",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}) : "";
+  const conflict = window.vadSyncAuthConflict;
+  let body;
+  if (!st.signedIn) body = `<div class="small muted">Sincroniza viagens, calendário, investimentos e fotografias entre os dois telemóveis. Tudo é cifrado no telemóvel antes de ser enviado: nem a Google consegue ler o conteúdo. Os seus gastos pessoais continuam privados.</div>
+    <button class="btn" type="button" data-act="syncOn" style="align-self:flex-start">Ativar sincronização</button>`;
+  else if (!st.hasKey) body = `<div class="small">Sessão Firebase: <strong>${esc(st.email||"")}</strong>. Falta indicar a palavra-passe do casal.</div>
+    <div class="btns"><button class="btn" type="button" data-act="syncKey">Indicar palavra-passe do casal</button><button class="btn ghost" type="button" data-act="syncOff">Cancelar</button></div>`;
+  else body = `<div class="row"><div class="small">Conta: <strong>${esc(st.email||"")}</strong></div><span class="pill ${st.state==="error"?"due":"ok"}">${st.state==="syncing"?"A sincronizar…":st.state==="error"?"Erro":"Ativa"}</span></div>
+    <div class="small muted">${st.state==="error" ? "Não foi possível sincronizar ("+esc(st.error)+"). Confirme a ligação à internet." : when ? "Última sincronização: "+esc(when) : ""}</div>
+    ${conflict ? `<div class="banner">Este utilizador já tem dados de outro telemóvel protegidos com uma palavra-passe diferente. <button class="link" data-act="syncAuth">Indicar a palavra-passe usada no outro telemóvel</button></div>` : ""}
+    <div class="btns"><button class="btn ghost" type="button" data-act="syncNow">Sincronizar agora</button><button class="btn ghost" type="button" data-act="syncOff">Desligar neste telemóvel</button></div>`;
+  return `<div class="glass card"><h2>Sincronização</h2>${body}</div>`;
+}
+function syncOnSheet(){
+  openSheet(`<h2>Ativar sincronização</h2>
+  <p class="small muted">Use o e-mail e a palavra-passe da conta criada para si no Firebase.</p>
+  <form id="f">
+    <label class="f" for="se">E-mail<input class="inp" type="email" id="se" autocomplete="username" required></label>
+    <label class="f" for="sp">Palavra-passe da conta Firebase<input class="inp" type="password" id="sp" autocomplete="current-password" required></label>
+    <button class="btn" type="submit">Continuar</button>
+  </form>`, b => b.querySelector("#f").onsubmit = async ev => { ev.preventDefault();
+    const btn = b.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "A verificar…";
+    try { await window.vadSync.signIn($("#se").value, $("#sp").value); closeSheet(); syncKeySheet(); }
+    catch(e){ btn.disabled = false; btn.textContent = "Continuar"; const c = e && e.code || "";
+      toast(/invalid-credential|wrong-password|user-not-found|invalid-email/.test(c) ? "E-mail ou palavra-passe incorretos." : /network/.test(c) ? "Sem ligação à internet." : /too-many/.test(c) ? "Demasiadas tentativas. Aguarde alguns minutos." : "Não foi possível iniciar sessão."); }
+  });
+}
+async function syncKeySheet(){
+  let exists = null; try { exists = await window.vadSync.coupleExists(); } catch(e){ toast("Sem acesso à base de dados. Confirme as regras no Firebase."); return; }
+  openSheet(`<h2>Palavra-passe do casal</h2>
+  <p class="small">${exists ? "Indique a palavra-passe do casal definida no outro telemóvel." : "Defina a palavra-passe do casal. É ela que cifra os vossos dados partilhados. <strong>Tem de ser a mesma nos dois telemóveis</strong> e não pode ser recuperada: guardem-na num local seguro."}</p>
+  <form id="f">
+    <label class="f" for="ck1">Palavra-passe do casal<input class="inp" type="password" id="ck1" autocomplete="new-password" required minlength="${exists?1:10}"></label>
+    ${exists?"":`<label class="f" for="ck2">Repetir<input class="inp" type="password" id="ck2" autocomplete="new-password" required minlength="10"></label><div class="small muted">Mínimo de 10 caracteres. Sugestão: uma frase com 4 palavras.</div>`}
+    <button class="btn" type="submit">${exists?"Ligar":"Definir e ligar"}</button>
+  </form>`, b => b.querySelector("#f").onsubmit = async ev => { ev.preventDefault();
+    const p1 = $("#ck1").value;
+    if (!exists) { if (p1.length<10) { toast("Mínimo de 10 caracteres."); return; } if (p1!==$("#ck2").value) { toast("As palavras-passe não coincidem."); return; } }
+    const btn = b.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "A ligar…";
+    try { await window.vadSync.setCouplePass(p1, !exists); closeSheet(); toast("Sincronização ativa."); render(); }
+    catch(e){ btn.disabled = false; btn.textContent = exists?"Ligar":"Definir e ligar"; toast(e && e.code==="wrong_couple" ? "Palavra-passe do casal incorreta." : "Não foi possível ligar."); }
+  });
+}
+function syncAuthSheet(){
+  const remote = window.vadSyncAuthConflict; if (!remote) return;
+  openSheet(`<h2>Palavra-passe do outro telemóvel</h2>
+  <p class="small">Os seus gastos pessoais do outro telemóvel estão protegidos com a palavra-passe que usava lá. Indique-a para os juntar a este telemóvel. A partir daí, essa passa a ser a sua palavra-passe também aqui.</p>
+  <form id="f"><label class="f" for="op">Palavra-passe usada no outro telemóvel<input class="inp" type="password" id="op" required></label><button class="btn" type="submit">Confirmar</button></form>`,
+  b => b.querySelector("#f").onsubmit = async ev => { ev.preventDefault();
+    try {
+      const k = await deriveKeys($("#op").value, remote.salt, remote.iter); if (k.ver !== remote.ver) { toast("Palavra-passe incorreta."); return; }
+      const me = SESSION.user;
+      for (const x of S.personal){ const {id, owner, virt, ...data} = x; if (virt) continue; await col("personal").doc(id).set({owner:me, ...(await encObj(k.key, data))}); }
+      await db.doc("auth/"+me).set(remote);
+      SESSION = {user:me, key:k.key, salt:remote.salt}; window.vadSyncAuthConflict = null;
+      closeSheet(); toast("Pronto. Use esta palavra-passe para entrar."); await refreshPersonal(false); window.vadSync.now();
+    } catch(e){ toast("Não foi possível concluir."); }
+  });
+}
+
 /* ecrã de início de sessão */
 function vLogin(){
   if (dbState!=="on") return `<div class="glass card" style="margin-top:30px"><div class="empty">${dbState==="off"?"Não foi possível aceder ao armazenamento deste navegador.":"A carregar…"}</div></div>`;
-  if (!loginUser) return `
-  <div style="margin-top:24px"><div class="eyebrow">Iniciar sessão</div><h1>Quem está a entrar?</h1></div>
+  if (!loginUser) {
+    const existing = ["p1","p2"].filter(p=>authDoc(p)), missing = ["p1","p2"].filter(p=>!authDoc(p));
+    const first = !existing.length;
+    const btn = p => `<button class="btn ${p==="p1"?"":"olive"}" data-act="loginPick" data-v="${p}" style="padding:14px">${esc(N(p))}${authDoc(p)?"":" · criar palavra-passe"}</button>`;
+    return `
+  <div style="margin-top:24px"><div class="eyebrow">${first?"Primeira utilização":"Iniciar sessão"}</div><h1>${first?"De quem é este telemóvel?":"Olá de novo."}</h1></div>
   <div class="glass card"><div class="stack" style="gap:10px">
-    ${["p1","p2"].map(p=>`<button class="btn ${p==="p1"?"":"olive"}" data-act="loginPick" data-v="${p}" style="padding:14px">${esc(N(p))}${authDoc(p)?"":" · criar palavra-passe"}</button>`).join("")}
+    ${(first ? ["p1","p2"] : existing).map(btn).join("")}
+    ${!first && missing.length ? (showOtherAcc ? missing.map(btn).join("") : `<button class="link" data-act="loginOther" style="align-self:center;margin-top:4px">Outra pessoa usa este telemóvel</button>`) : ""}
   </div></div>
-  <div class="small muted">Cada pessoa entra com a sua própria palavra-passe. Os gastos pessoais ficam cifrados e só podem ser lidos por quem os registou.</div>`;
+  <div class="small muted">${first ? "Escolha o seu nome e crie a sua palavra-passe. Cada telemóvel guarda apenas os seus próprios dados." : "Cada pessoa entra com a sua própria palavra-passe. Os gastos pessoais ficam cifrados e só podem ser lidos por quem os registou."}</div>`;
+  }
   const has = !!authDoc(loginUser);
   return `
   <div style="margin-top:24px"><div class="eyebrow">${has?"Iniciar sessão":"Criar palavra-passe"}</div><h1>${esc(N(loginUser))}</h1></div>
@@ -1055,6 +1130,7 @@ function vSettings(){
     <div class="small">Sessão iniciada como <strong>${esc(N(ME()))}</strong>. A sessão termina automaticamente após 5 minutos com a aplicação em segundo plano.</div>
     <div class="btns"><button class="btn ghost" type="button" data-act="logout">Terminar sessão</button><button class="btn ghost" type="button" data-act="chgPass">Alterar palavra-passe</button></div>
   </div>
+  ${syncCard()}
   <div class="glass card">
     <h2>Nomes</h2>
     <form id="namesForm">
@@ -1168,8 +1244,14 @@ $("#main").addEventListener("click", ev => {
     editPers: ()=>persSheet(S.personal.find(x=>x.id===v)),
     logout: ()=>logout("Sessão terminada."),
     chgPass: ()=>chgPassSheet(),
+    syncOn: ()=>syncOnSheet(),
+    syncKey: ()=>syncKeySheet(),
+    syncAuth: ()=>syncAuthSheet(),
+    syncNow: ()=>{ window.vadSync.now(); toast("A sincronizar…"); },
+    syncOff: async ()=>{ await window.vadSync.disconnect(); toast("Sincronização desligada neste telemóvel. Os dados continuam aqui."); render(); },
     loginPick: ()=>{ loginUser = v; render(); setTimeout(()=>{ const f = $("#lp1"); if (f) f.focus(); }, 50); },
     loginBack: ()=>{ loginUser = null; render(); },
+    loginOther: ()=>{ showOtherAcc = true; render(); },
     loginReset: ()=>resetSheet(),
     persPrev: ()=>{ persMonth.m--; if(persMonth.m<0){persMonth.m=11;persMonth.y--;} render(); },
     persNext: ()=>{ persMonth.m++; if(persMonth.m>11){persMonth.m=0;persMonth.y++;} render(); },
@@ -1467,11 +1549,11 @@ const OK_TYPES = ["image/jpeg","image/png","image/webp","image/gif"];
 async function prep(file){
   try {
     const bmp = await createImageBitmap(file);
-    const max = 2200, k = Math.min(1, max/Math.max(bmp.width,bmp.height));
-    if (k===1 && OK_TYPES.includes(file.type) && file.size < 3e6) return file;
+    const max = 1800, k = Math.min(1, max/Math.max(bmp.width,bmp.height));
+    if (k===1 && OK_TYPES.includes(file.type) && file.size < 9e5) return file;
     const c = document.createElement("canvas"); c.width = Math.round(bmp.width*k); c.height = Math.round(bmp.height*k);
     c.getContext("2d").drawImage(bmp,0,0,c.width,c.height);
-    const blob = await new Promise(r=>c.toBlob(r,"image/jpeg",0.86));
+    const blob = await new Promise(r=>c.toBlob(r,"image/jpeg",0.82));
     if (blob) return blob;
   } catch(e){}
   return OK_TYPES.includes(file.type) ? file : null;

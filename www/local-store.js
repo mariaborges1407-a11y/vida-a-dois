@@ -38,7 +38,7 @@
     let t; try { t = idb.transaction(store, mode_); } catch (e) { rej(e); return; }
     const s = t.objectStore(store);
     let out; try { out = fn(s); } catch (e) { rej(e); return; }
-    t.oncomplete = () => res(out && out.result !== undefined ? out.result : out);
+    t.oncomplete = () => res((typeof IDBRequest !== "undefined" && out instanceof IDBRequest) ? out.result : out);
     t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
   });
 
@@ -105,9 +105,9 @@
 
   function doc(path) {
     return {
-      async set(data) { const v = clone(data); try { await putDoc(path, v); } catch (e) { throw wrapErr(e); } mem.set(path, v); notify(path); },
+      async set(data) { const v = clone(data); try { await putDoc(path, v); } catch (e) { throw wrapErr(e); } mem.set(path, v); notify(path); syncPush(path, v); },
       async update(data) { if (!mem.has(path)) throw { code: "not_found" }; return this.set({ ...mem.get(path), ...data }); },
-      async delete() { try { await delDoc(path); } catch (e) { throw wrapErr(e); } mem.delete(path); notify(path); },
+      async delete() { try { await delDoc(path); } catch (e) { throw wrapErr(e); } mem.delete(path); notify(path); syncPush(path, null); },
       async get() { return docSnap(path); },
       onSnapshot(cb) { const off = add(docL, path, cb); cb(docSnap(path)); return off; }
     };
@@ -120,17 +120,29 @@
     doc
   };
 
+  /* ligação à sincronização (sync.js): alterações locais seguem para o Firebase */
+  const syncPush = (path, v) => { try { if (window.vadSync && window.vadSync.running()) window.vadSync.pushDoc(path, v); } catch (e) {} };
+  window.vadStore = {
+    has: p => mem.has(p),
+    get: p => mem.has(p) ? clone(mem.get(p)) : undefined,
+    all: () => { const o = {}; mem.forEach((v, k) => o[k] = v); return o; },
+    async applyRemote(path, data) { await ready; if (data === null) { await delDoc(path); mem.delete(path); } else { const v = clone(data); await putDoc(path, v); mem.set(path, v); } notify(path); },
+    blobKeys: async () => { await ready; return blobKeys(); },
+    getBlob: async id => { await ready; return getBlob(id); }
+  };
   const newAssetId = () => "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   const assets = {
     async upload(blob, opts) {
       const id = newAssetId();
       const b = (opts && opts.type && !blob.type) ? new Blob([blob], { type: opts.type }) : blob;
       try { await putBlob(id, b); } catch (e) { throw isQuota(e) ? { code: "quota_or_state" } : e; }
+      try { if (window.vadSync && window.vadSync.running()) window.vadSync.pushBlob(id, b); } catch (e) {}
       return { id };
     },
     async get(id) { await ready; return getBlob(id); },
     async delete(id) {
       await delBlob(id);
+      try { if (window.vadSync && window.vadSync.running()) window.vadSync.delBlob(id); } catch (e) {}
       const u = urlCache.get(id); if (u) { URL.revokeObjectURL(u); urlCache.delete(id); }
     }
   };
@@ -142,7 +154,12 @@
     await ready;
     const id = src.slice(7);
     let u = urlCache.get(id);
-    if (!u) { try { const b = await getBlob(id); if (b) { u = URL.createObjectURL(b); urlCache.set(id, u); } } catch (e) {} }
+    if (!u) { try {
+      let b = await getBlob(id);
+      // fotografia colocada no outro telemóvel: descarrega-a (cifrada) quando é precisa
+      if (!b && window.vadSync && window.vadSync.running()) { b = await window.vadSync.fetchBlob(id); if (b) await putBlob(id, b); }
+      if (b) { u = URL.createObjectURL(b); urlCache.set(id, u); }
+    } catch (e) {} }
     if (u && img.getAttribute("src") === src) img.setAttribute("src", u);
   }
   const scan = root => { if (root.nodeType !== 1) return; if (root.tagName === "IMG") fixImg(root); root.querySelectorAll && root.querySelectorAll('img[src^="/_blob/"]').forEach(fixImg); };
@@ -210,7 +227,7 @@
   window.vadSaveFiles = saveFiles;
   window.vadIsNative = isNative;
   const currentMe = () => (window.vadCurrentUser ? window.vadCurrentUser() : null);
-  window.vadWipe = async () => { await ready; await clearAll(); try { localStorage.removeItem("vad-view"); } catch (e) {} location.reload(); };
+  window.vadWipe = async () => { await ready; try { if (window.vadSync) await window.vadSync.disconnect(); } catch (e) {} await clearAll(); try { localStorage.removeItem("vad-view"); } catch (e) {} location.reload(); };
 
   /* ---------- cópia de segurança ---------- */
   async function exportAll() {
@@ -233,6 +250,7 @@
     await ready;
     let data; try { data = JSON.parse(await file.text()); } catch (e) { alert("Ficheiro inválido."); return; }
     if (!data || data.app !== "vida-a-dois" || !data.docs) { alert("O ficheiro selecionado não é uma cópia de segurança válida da Vida a Dois."); return; }
+    if (window.vadSync && window.vadSync.running()) { alert("Com a sincronização ativa não é possível importar cópias, para não substituir os dados do outro telemóvel. Desligue a sincronização neste telemóvel, importe a cópia e volte a ligá-la."); return; }
     if (!confirm("Esta operação substitui todos os dados deste dispositivo pelos da cópia de segurança. Pretende continuar?")) return;
     // contas e gastos pessoais deste telemóvel mantêm-se; da cópia só entram os gastos pessoais de quem tem sessão iniciada
     const local = {}; mem.forEach((v, k) => local[k] = v);
